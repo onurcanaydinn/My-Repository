@@ -1,0 +1,2529 @@
+---
+title: "Project"
+author: "Onur Can Aydın"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(readxl)
+library(GGally)
+library(skimr)
+library(ggcorrplot)
+library(lubridate)
+library(forecast)
+```
+
+```{r,echo=FALSE,results="hide"}
+library(knitr)
+library(formatR)
+
+
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+```{r,echo=FALSE,eval=FALSE}
+rmarkdown::render("/Users/onurcanaydin/Desktop/hw2/markdown.Rmd",output_format="pdf_document")
+rmarkdown::render("/Users/onurcanaydin/Desktop/hw2/markdown.Rmd",output_format="html_document")
+```
+
+
+
+```{r}
+require(data.table)
+require(lubridate)
+require(zoo)
+require(forecast)
+data_path='/Users/onurcanaydin/Desktop/360\ proje/ProjectRawData.csv'
+data<-fread(data_path)
+```
+
+
+#TRENDYOLMILLA TAYT
+
+##Introduction and Model Construction
+
+After filtering our whole data for Trendmilla Tayt,we plot graph for amount that has been sold.
+
+```{r}
+maproducts<-data[data$product_content_id==31515569]
+
+```
+
+```{r}
+require(ggplot2)
+ggplot(maproducts,aes(x=event_date,y=sold_count))+geom_line()
+```
+
+That plot has wide variance, which urges us to take logarithm of sale data.Moreover, we add day,month ,trend data for further process.Then,we plot log of sold products over time to see if we decrease variance or not.
+
+```{r}
+maproducts[,month:=month(event_date)]
+maproducts[,day:=lubridate::wday(event_date)]
+
+maproducts[,trend:=1:.N]
+maproducts[,log_sold:=log(sold_count)]
+ggplot(maproducts,aes(x=event_date,y=log_sold))+geom_line()
+
+```
+
+Variance of log of sold products seems more stable.Therefore,we start building linear regression models with logarithmic data.
+
+```{r}
+lm_model<-lm(maproducts,formula=log_sold~month+day+price+visit_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+favored_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+favored_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+category_brand_sold+as.factor(day))
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+category_brand_sold)
+summary(lm_model)
+
+```
+
+After evaluation of different models parameters of which is included in data, we choose model formula of which is 'log_sold ~ month + price + visit_count + trend +  favored_count + category_sold + category_brand_sold'.
+Furhermore,lag variables could violate our model.For that reason, we add lag1 and lag2 variables to model and examine their effectiveness.
+
+
+
+```{r}
+maproducts[, lag_1:= NA]
+maproducts$lag_1[2:372] <- maproducts$log_sold[1:371]
+maproducts[, lag_2:= NA]
+maproducts$lag_2[3:372] <- maproducts$log_sold[1:370]
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+lag_1)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+category_sold+lag_1)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+category_sold+lag_1+lag_2)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+category_sold+lag_1+lag_2+as.factor(day))
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+category_sold+lag_1+lag_2)
+summary(lm_model)
+```
+
+That modification gives us better model with respect to r-squared value.Our new best model has formula that is 'log_sold ~ month + price + trend + category_sold + lag_1 + lag_2'.
+
+As another improving step, we could take month variable as factor variable.
+
+```{r}
+
+lm_model<-lm(maproducts,formula=log_sold~as.factor(month)+price+visit_count+trend+favored_count+category_sold+lag_1+lag_2)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~as.factor(month)+price+visit_count+trend+category_sold+lag_1+lag_2)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~as.factor(month)+price+trend+category_sold+lag_1+lag_2)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~as.factor(month)+price+category_sold+lag_1+lag_2)
+summary(lm_model)
+```
+
+That is quite developing iteration,too.From the first view of logarithm of sold products,we may predict outliers that breaks
+our models' goodness.Let us put them into model.
+
+```{r}
+maproducts[, residuals:= NA]
+maproducts$residuals[2:372] <- lm_model$residuals
+maproducts[!is.na(residuals), quant5:=quantile(residuals,0.05)]
+maproducts[!is.na(residuals), quant95:=quantile(residuals,0.95)]
+maproducts[,outlier_small:=as.numeric(residuals<quant5)]
+maproducts[,outlier_great:=as.numeric(residuals>quant95)]
+
+lm_model2<- lm(maproducts,formula=log_sold~as.factor(month)+price+category_sold+lag_1+lag_2+outlier_small+outlier_great)
+summary(lm_model2)
+lm_model2_1<- lm(maproducts,formula=log_sold~as.factor(month)+price+category_sold+lag_1+lag_2+outlier_great)
+summary(lm_model2)
+```
+
+As we expected, outliers help our model to predict better.
+For another perspective AIC values of models.
+
+
+```{r}
+require(ursa)
+AIC(lm_model)
+AIC(lm_model2_1)
+
+```
+
+That proves claim of model with month as factor variable.
+
+Now,It is time for us to come up with arima models.Firstly,we build time series with frequency=7.Plot that.
+
+```{r}
+ts_sold<-ts(maproducts$log_sold,frequency = 7)
+ts.plot(ts_sold)
+```
+
+Variance is stable enough thanks to taking logarithm of data.Then, decompose time series data with additive type.
+Plot decomposed data
+
+```{r}
+sold_decomp<-decompose(ts_sold,type="additive")
+plot(sold_decomp)
+```
+
+Random part is kind of stationary except some outlier points.
+We shall observe autocorrelation and partial autocorrelation of random part.
+
+```{r}
+random=sold_decomp$random
+#random part looks really fine.
+acf(sold_decomp$random,na.action = na.pass)
+pacf(sold_decomp$random,na.action = na.pass)
+```
+
+As we observe from those graphs,we start building arima models with (p,d,q)=(2,0,0) and increase p value to 10 one by one.After this process,we find model with auto arima function.
+Pick the best model.
+
+```{r}
+ar_model<-arima(random,order=c(2,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(3,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(4,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(5,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(6,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(7,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(8,0,0))
+summary(ar_model)
+ar_model9<-arima(random,order=c(9,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(10,0,0))
+summary(ar_model)
+auto.arima(random,seasonal = FALSE,trace=TRUE)
+fitted_model<-arima(random,order=c(9,0,0))
+```
+
+Best model we have above is the model with (p,d,q)=(9,0,0).
+
+To compare lm and arima models, we should compare them for test period which is from 2021-05-11 to 2021-05-29.
+
+
+```{r}
+train_start=as.Date('2020-05-25')
+test_start=as.Date('2021-05-11')
+test_end=as.Date('2021-05-29')
+
+test_dates=seq(test_start,test_end,by='day')
+```
+
+
+```{r}
+#forecast with lm model
+forecast_with_lr=function(fmla, data,forecast_data){
+    fitted_lm=lm(as.formula(fmla),data)
+    forecasted=predict(fitted_lm,forecast_data)
+    return(list(forecast=as.numeric(forecasted),model=fitted_lm))
+}
+
+# forecast with ARIMA models
+forecast_with_arima=function(data,forecast_ahead,target_name='log_sold',
+                              is_seasonal=F,is_stepwise=F,is_trace=T,is_approx=F){
+    command_string=sprintf('input_series=data$%s',target_name)
+    print(command_string)
+    eval(parse(text=command_string))
+    
+    fitted=arima(input_series,order=c(9,0,0))
+    
+    forecasted=forecast(fitted,h=forecast_ahead)
+    return(list(forecast=as.numeric(forecasted$mean),model=fitted))
+}
+```
+
+We define our functions with respect to parameters we found above.Then,we forecast for test dates with our lm and arima models separately.
+
+```{r}
+#loop over the test dates
+forecast_ahead=1
+
+
+results=vector('list',length(test_dates))
+i=1
+for(i in 1:length(test_dates)){
+    current_date=test_dates[i]-forecast_ahead
+    print(test_dates[i])
+    past_data=maproducts[event_date<=current_date]
+    forecast_data=maproducts[event_date==test_dates[i]]
+    
+    # first lm models
+    fmla='log_sold ~ as.factor(month) + price + category_sold + 
+    lag_1 + lag_2 + outlier_great'
+    forecasted=forecast_with_lr(fmla,past_data,forecast_data)
+    forecast_data[,lm_prediction:=forecasted$forecast]
+
+    # arima model with auto.arima
+    arima_forecast=forecast_with_arima(past_data,forecast_ahead,'log_sold',is_trace=F)
+    forecast_data[,arima_prediction:=arima_forecast$forecast]
+
+    results[[i]]=forecast_data
+}
+
+overall_results=rbindlist(results)
+
+melted_result=melt(overall_results,c('event_date','log_sold'),c('lm_prediction','arima_prediction'))
+```
+
+We turned the results into melted results(long form).
+
+```{r}
+melted_result 
+accu=function(actual,forecast){
+  n=length(actual)
+  error=actual-forecast
+  mean=mean(actual)
+  sd=sd(actual)
+  CV=sd/mean
+  FBias=sum(error)/sum(actual)
+  MAPE=sum(abs(error/actual))/n
+  RMSE=sqrt(sum(error^2)/n)
+  MAD=sum(abs(error))/n
+  MADP=sum(abs(error))/sum(abs(actual))
+  WMAPE=MAD/mean
+  l=data.frame(n,mean,sd,CV,FBias,MAPE,RMSE,MAD,MADP,WMAPE)
+  return(l)
+}
+```
+
+To compare models,we accumulate errors of our models in terms of statistical methods with our accumulation function we defined above.
+
+```{r}
+
+performance=melted_result[,accu(log_sold,value),by=list(variable)]
+
+performance
+```
+
+First view of data shows that lm prediction is better in terms of MAPE.However,let us see boxplot MAPE and FBias with respect to days of a week.
+
+```{r}
+performance=melted_result[,accu(log_sold,value),by=list(event_date,variable)]
+performance[,day_of_week:=wday(event_date,label=T)]
+
+
+ggplot(performance, aes(x=day_of_week, y=MAPE,fill=variable)) + 
+    geom_boxplot() 
+
+ggplot(performance, aes(x=day_of_week, y=FBias,fill=variable)) + 
+    geom_boxplot() 
+```
+
+As we observe from table,MAPE values of lm prediction is less.They  both tend to predict less.However,lm is better than arima in terms of FBias ,too.
+
+
+So,we forecast with our lm model.Before that,we forecast our parameters by building arima model with auto arima function.
+
+```{r}
+
+price_ts <- ts(maproducts$price, frequency = 7)
+price_dec <- decompose(x = price_ts,type = "additive")
+price_model= auto.arima(price_dec$random)
+price_model_forecast <- predict(price_model, n.ahead = 15)$pred
+seasonality=price_dec$seasonal[1:1]
+last_trend_value <-tail(price_dec$trend[!is.na(price_dec$trend)],1)
+price_model_forecast=price_model_forecast+last_trend_value+seasonality
+
+model_cat<-auto.arima(maproducts$category_sold)
+cat_fcast<-predict(model_cat,n.ahead = 15)$pred
+model_lag_1<-auto.arima(maproducts$lag_1)
+lag1_fcast<-predict(model_lag_1,n.ahead = 15)$pred
+lag_2_ts <- ts(maproducts$lag_2, frequency = 7)
+lag_2_dec <- decompose(x = lag_2_ts,type = "additive")
+lag_2_model= auto.arima(lag_2_dec$random)
+lag_2_model_forecast <- predict(lag_2_model, n.ahead = 15)$pred
+seasonality=lag_2_dec$seasonal[1:1]
+last_trend_value <-tail(lag_2_dec$trend[!is.na(lag_2_dec$trend)],1)
+lag_2_model_forecast=lag_2_model_forecast+last_trend_value+seasonality
+outlier_ts <- ts(maproducts$outlier_great, frequency = 6)
+outlier_dec <- decompose(x = outlier_ts,type = "additive")
+outlier_model= auto.arima(outlier_dec$random)
+outlier_model_forecast <- predict(outlier_model, n.ahead = 15)$pred
+seasonality=outlier_dec$seasonal[1:1]
+last_trend_value <-tail(outlier_dec$trend[!is.na(outlier_dec$trend)],1)
+outlier_model_forecast=outlier_model_forecast+last_trend_value+seasonality
+
+
+
+
+```
+
+
+Now,we forecast our value with our forecasted parameters.
+
+```{r}
+forecast_Log<-predict(lm_model2_1,data.frame(month=as.factor(6) ,price=price_model_forecast[1],category_sold=cat_fcast[1],lag_1=lag1_fcast[1],lag_2=lag_2_model_forecast[1],outlier_great=outlier_model_forecast[1]))
+
+fcast<-exp(forecast_Log)
+fcast
+
+```
+
+##Xiaomi Bluetooth Kulaklık
+
+After filtering our whole data for Xiaomi Bluetooth Kulaklık,we plot graph for amount that has been sold.
+
+
+```{r}
+maproducts<-data[data$product_content_id==6676673]
+
+```
+
+```{r}
+require(ggplot2)
+ggplot(maproducts,aes(x=event_date,y=sold_count))+geom_line()
+```
+
+That plot has wide variance, which urges us to take logarithm of sale data.Moreover, we add day,month ,trend data for further process.Then,we plot log of sold products over time to see if we decrease variance or not.
+
+```{r}
+maproducts[,month:=month(event_date)]
+maproducts[,day:=lubridate::wday(event_date)]
+
+head(maproducts,10)
+maproducts[,trend:=1:.N]
+maproducts[,log_sold:=log(sold_count)]
+ggplot(maproducts,aes(x=event_date,y=log_sold))+geom_line()
+```
+
+Variance of log of sold products seems more stable .Therefore,we start building linear regression models with logarithmic data.
+
+
+```{r}
+lm_model<-lm(maproducts,formula=log_sold~month+day+price+visit_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count)
+summary(lm_model)
+
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+favored_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+favored_count)
+
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold)
+summary(lm_model)
+```
+
+After evaluation of different models parameters of which is included in data, we choose model formula of which is 'maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold'.
+Furhermore,lag variables could violate our model.For that reason, we add lag1 and lag2 variables to model and examine their effectiveness.
+
+
+
+```{r}
+maproducts[, lag_1:= NA]
+maproducts$lag_1[2:372] <- maproducts$log_sold[1:371]
+maproducts[, lag_2:= NA]
+maproducts$lag_2[3:372] <- maproducts$log_sold[1:370]
+#View(maproducts)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+lag_1)
+summary(lm_model)
+#10.06
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+category_sold+lag_1+lag_2+as.factor(day))
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+category_sold+lag_1+lag_2)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+lag_1+lag_2)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+lag_1+lag_2+category_favored)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~as.factor(month)+price+trend+favored_count+category_sold+lag_1+lag_2+category_favored)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~as.factor(month)+price+trend+favored_count+category_sold+lag_1+lag_2+category_favored)
+summary(lm_model)
+
+```
+
+That modification gives us better model with respect to r-squared value.Our new best model has formula that is 'log_sold ~ as.factor(month) + price + trend + favored_count + category_sold + lag_1 + lag_2 + category_favored'.
+
+From the first view of logarithm of sold products,we may predict outliers that breaks
+our models' goodness.Let us put them into model.
+
+
+```{r}
+maproducts[, residuals:= NA]
+maproducts$residuals[2:372] <- lm_model$residuals
+maproducts[!is.na(residuals), quant5:=quantile(residuals,0.05)]
+maproducts[!is.na(residuals), quant95:=quantile(residuals,0.95)]
+maproducts[,outlier_small:=as.numeric(residuals<quant5)]
+maproducts[,outlier_great:=as.numeric(residuals>quant95)]
+
+lm_model2<- lm(maproducts,formula=log_sold~as.factor(month)+price+category_sold+lag_1+lag_2+outlier_small+outlier_great)
+summary(lm_model2)
+lm_model2<- lm(maproducts,formula=log_sold~as.factor(month)+price+category_sold+lag_1+lag_2+outlier_great)
+summary(lm_model2)
+lm_model2<-lm(maproducts,formula=log_sold~as.factor(month)+price+trend+favored_count+category_sold+lag_1+lag_2+category_favored+outlier_small+outlier_great)
+summary(lm_model2)
+lm_model2<-lm(maproducts,formula=log_sold~as.factor(month)+price+trend+favored_count+category_sold+lag_1+lag_2+category_favored+outlier_great)
+summary(lm_model2)
+```
+
+In this model,we can add week variable to model to examine its effectiveness in the model.
+
+
+```{r}
+#weekly
+
+maproducts[,weeks:=week(event_date)]
+
+head(maproducts)
+lm_model3_2<- lm(maproducts,formula=log_sold~as.factor(month)+price+trend+favored_count+category_sold+lag_1+lag_2+category_favored+outlier_great+weeks)
+summary(lm_model3_2)
+#pick model 3
+```
+
+According to r-squared value,week variable makes contribution to our model.
+For another perspective AIC values of models.
+```{r}
+require(ursa)
+AIC(lm_model)
+AIC(lm_model2)
+AIC(lm_model3_2)
+```
+
+That proves claim of model with month as factor variable.
+
+Now,It is time for us to come up with arima models.Firstly,we build time series with frequency=7.Plot that.
+
+```{r}
+#time series and arima
+ts_sold<-ts(maproducts$log_sold,frequency = 7)
+ts.plot(ts_sold)
+Box.test(ts_sold,lag=7,type="Ljung-Box")
+
+```
+
+Variance is stable enough thanks to taking logarithm of data.Then, decompose time series data with additive type.
+Plot decomposed data
+
+```{r}
+sold_decomp<-decompose(ts_sold,type="additive")
+plot(sold_decomp)
+```
+
+Random part is kind of stationary except some outlier points.
+We shall observe autocorrelation and partial autocorrelation of random part.
+
+```{r}
+random=sold_decomp$random
+#random part looks really fine.
+acf(sold_decomp$random,na.action = na.pass)
+pacf(sold_decomp$random,na.action = na.pass)
+```
+
+As we observe from those graphs,we start building arima models with (p,d,q)=(2,0,0) and increase p value to 10 one by one.After this process,we find model with auto arima function.
+Pick the best model.
+
+```{r}
+ar_model<-arima(random,order=c(2,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(3,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(4,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(5,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(6,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(7,0,0))
+summary(ar_model)
+ar_model9<-arima(random,order=c(8,0,0))
+summary(ar_model)
+
+```
+
+Best model we have above is the model with (p,d,q)=(8,0,0).Then,we use auto arima function to compare our model with the model auto arima functions finds.
+
+
+```{r}
+auto.arima(random,seasonal = FALSE,trace=TRUE)
+fitted_model<-arima(random,order=c(8,0,0))
+AIC(fitted_model)
+```
+
+Our model is better off.
+
+
+To compare lm and arima models, we should compare them for test period which is from 2021-05-11 to 2021-05-29.
+
+```{r}
+train_start=as.Date('2020-05-25')
+test_start=as.Date('2021-05-11')
+test_end=as.Date('2021-05-29')
+
+test_dates=seq(test_start,test_end,by='day')
+test_dates
+```
+
+
+```{r}
+#forecast with lm model
+forecast_with_lr=function(fmla, data,forecast_data){
+    fitted_lm=lm(as.formula(fmla),data)
+    forecasted=predict(fitted_lm,forecast_data)
+    return(list(forecast=as.numeric(forecasted),model=fitted_lm))
+}
+
+# forecast with ARIMA models
+forecast_with_arima=function(data,forecast_ahead,target_name='log_sold',
+                              is_seasonal=F,is_stepwise=F,is_trace=T,is_approx=F){
+    command_string=sprintf('input_series=data$%s',target_name)
+    print(command_string)
+    eval(parse(text=command_string))
+    
+    fitted=arima(input_series,order=c(8,0,0))
+    
+    forecasted=forecast(fitted,h=forecast_ahead)
+    return(list(forecast=as.numeric(forecasted$mean),model=fitted))
+}
+```
+
+We define our functions with respect to parameters we found above.Then,we forecast for test dates with our lm and arima models separately.
+
+```{r}
+#loop over the test dates
+forecast_ahead=1
+
+
+results=vector('list',length(test_dates))
+i=1
+for(i in 1:length(test_dates)){
+    current_date=test_dates[i]-forecast_ahead
+    print(test_dates[i])
+    past_data=maproducts[event_date<=current_date]
+    forecast_data=maproducts[event_date==test_dates[i]]
+    
+    # first lm models
+    fmla='log_sold~as.factor(month)+price+trend+favored_count+category_sold+lag_1+lag_2+category_favored+outlier_great+weeks'
+    forecasted=forecast_with_lr(fmla,past_data,forecast_data)
+    forecast_data[,lm_prediction:=forecasted$forecast]
+
+    # arima model with auto.arima
+    arima_forecast=forecast_with_arima(past_data,forecast_ahead,'log_sold',is_trace=F)
+    forecast_data[,arima_prediction:=arima_forecast$forecast]
+
+    results[[i]]=forecast_data
+}
+
+overall_results=rbindlist(results)
+
+melted_result=melt(overall_results,c('event_date','log_sold'),c('lm_prediction','arima_prediction'))
+```
+
+We turned the results into melted results(long form).
+
+
+```{r}
+accu=function(actual,forecast){
+  n=length(actual)
+  error=actual-forecast
+  mean=mean(actual)
+  sd=sd(actual)
+  CV=sd/mean
+  FBias=sum(error)/sum(actual)
+  MAPE=sum(abs(error/actual))/n
+  RMSE=sqrt(sum(error^2)/n)
+  MAD=sum(abs(error))/n
+  MADP=sum(abs(error))/sum(abs(actual))
+  WMAPE=MAD/mean
+  l=data.frame(n,mean,sd,CV,FBias,MAPE,RMSE,MAD,MADP,WMAPE)
+  return(l)
+}
+```
+
+To compare models,we accumulate errors of our models in terms of statistical methods with our accumulation function we defined above.
+
+
+
+```{r}
+
+performance=melted_result[,accu(log_sold,value),by=list(variable)]
+
+performance
+```
+
+First view of data shows that lm prediction is better in terms of MAPE.However,let us see boxplot MAPE and FBias with respect to days of a week.
+
+```{r}
+
+performance=melted_result[,accu(log_sold,value),by=list(event_date,variable)]
+performance[,day_of_week:=wday(event_date,label=T)]
+
+
+ggplot(performance, aes(x=day_of_week, y=MAPE,fill=variable)) + 
+    geom_boxplot() 
+
+ggplot(performance, aes(x=day_of_week, y=FBias,fill=variable)) + 
+    geom_boxplot() 
+```
+
+As we observe from table,MAPE values of lm prediction is less.They  both tend to predict less.However,lm is better than arima in terms of FBias ,too.
+
+
+So,we forecast with our lm model.Before that,we forecast our parameters by building arima model with auto arima function.
+
+```{r}
+
+price_ts <- ts(maproducts$price, frequency = 7)
+price_dec <- decompose(x = price_ts,type = "additive")
+price_model= auto.arima(price_dec$random)
+AIC(price_model)
+price_model_forecast <- predict(price_model, n.ahead = 15)$pred
+seasonality=price_dec$seasonal[1:1]
+last_trend_value <-tail(price_dec$trend[!is.na(price_dec$trend)],1)
+price_model_forecast=price_model_forecast+last_trend_value+seasonality
+price_model_forecast
+model_fav<-auto.arima(maproducts$favored_count)
+fav_fcast<-predict(model_fav,n.ahead = 15)$pred
+model_lag_1<-auto.arima(maproducts$lag_1)
+lag1_fcast<-predict(model_lag_1,n.ahead = 15)$pred
+model_lag_2<-auto.arima(maproducts$lag_2)
+lag2_fcast<-predict(model_lag_2,n.ahead = 15)$pred
+model_cat<-auto.arima(maproducts$category_sold)
+cat_ffcast<-predict(model_cat,n.ahead = 15)$pred
+cat_fav_ts <- ts(maproducts$category_favored, frequency = 7)
+cat_fav_dec <- decompose(x = cat_fav_ts,type = "additive")
+cat_fav_model= auto.arima(cat_fav_dec$random)
+AIC(cat_fav_model)
+cat_fav_model_forecast <- predict(cat_fav_model, n.ahead = 15)$pred
+brand_ts <- ts(maproducts$category_brand_sold, frequency = 7)
+brand_dec <- decompose(x = brand_ts,type = "additive")
+brand_model= auto.arima(brand_dec$random)
+AIC(brand_model)
+brand_model_forecast <- predict(brand_model, n.ahead = 15)$pred
+outlier_ts <- ts(maproducts$outlier_great, frequency = 7)
+outlier_dec <- decompose(x = outlier_ts,type = "additive")
+outlier_model= auto.arima(outlier_dec$random)
+AIC(outlier_model)
+outlier_model_forecast <- predict(outlier_model, n.ahead = 15)$pred
+#outlier forecast0.005171854	
+#trend 373
+#cat fav 24381.21
+#week 21
+
+
+```
+```{r}
+forecast_log<-predict(lm_model3_2,data.frame(month=as.factor(6) ,price=price_model_forecast[1],trend=373,favored_count=fav_fcast[1],category_sold=cat_ffcast[1],category_brand_sold=brand_model_forecast[1],lag_1=lag1_fcast[1],lag_2=lag2_fcast[1],category_favored=cat_fav_model_forecast[1],outlier_great=outlier_model_forecast[1],weeks=21))
+
+```
+
+Now,we forecast our value with our forecasted parameters.
+
+
+```{r}
+fcast2<-exp(forecast_log)
+
+
+fcast2
+
+```
+
+##Fakir Dik Süpürge 
+
+After filtering our whole data for Fakir Dik Süpürge,we plot graph for amount that has been sold.
+
+
+```{r}
+maproducts<-data[data$product_content_id==7061886]
+head(maproducts,5)
+```
+
+
+
+```{r}
+require(ggplot2)
+ggplot(maproducts,aes(x=event_date,y=sold_count))+geom_line()
+```
+
+That plot has wide variance, which urges us to take logarithm of sale data.Moreover, we add day,month ,trend data for further process.Then,we plot log of sold products over time to see if we decrease variance or not.
+
+```{r}
+maproducts[,month:=month(event_date)]
+maproducts[,day:=lubridate::wday(event_date)]
+
+head(maproducts,10)
+maproducts[,trend:=1:.N]
+maproducts[,log_sold:=log(sold_count)]
+ggplot(maproducts,aes(x=event_date,y=log_sold))+geom_line()
+```
+
+Variance of log of sold products seems more stable.Therefore,we start building linear regression models with logarithmic data.
+
+```{r}
+lm_model<-lm(maproducts,formula=log_sold~month+day+price+visit_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count)
+summary(lm_model)
+
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+favored_count)
+summary(lm_model)
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+favored_count)
+summary(lm_model)
+
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+category_brand_sold)
+summary(lm_model)
+
+
+lm_model<-lm(maproducts,formula=log_sold~month+price+visit_count+trend+favored_count+category_sold+category_brand_sold)
+summary(lm_model)
+#that is the best
+lm_model<-lm(maproducts,formula=log_sold~month+price+trend+favored_count+category_sold+category_brand_sold)
+summary(lm_model)
+```
+
+After evaluation of different models parameters of which is included in data, we choose model formula of which is 'log_sold~month+price+trend+favored_count+category_sold+category_brand_sold'.
+
+Furhermore,lag variables could violate our model.For that reason, we add lag1 and lag2 variables to model and examine their effectiveness.
+
+
+```{r}
+
+maproducts[, lag_1:= NA]
+maproducts$lag_1[2:372] <- maproducts$log_sold[1:371]
+maproducts[, lag_2:= NA]
+maproducts$lag_2[3:372] <- maproducts$log_sold[1:370]
+lm_model<-lm(formula = log_sold ~ as.factor(month) + price + trend + favored_count + 
+    category_sold + category_brand_sold, data = maproducts)
+summary(lm_model)
+lm_model<-lm(formula = log_sold ~ as.factor(month) + price + trend + favored_count + 
+    category_sold + category_brand_sold+lag_1, data = maproducts)
+summary(lm_model)
+
+lm_model<-lm(formula = log_sold ~ as.factor(month) + price + trend + favored_count + 
+    category_sold + category_brand_sold+lag_1+lag_2, data = maproducts)
+summary(lm_model)
+```
+
+That modification gives us better model with respect to r-squared value.Our new best model has formula that is 'log_sold ~ as.factor(month) + price + trend + favored_count + category_sold + category_brand_sold + lag_1 + lag_2'.
+
+That is quite developing iteration,too.From the first view of logarithm of sold products,we may predict outliers that breaks
+our models' goodness.Let us put them into model.
+
+```{r}
+maproducts[, residuals:= NA]
+maproducts$residuals[2:372] <- lm_model$residuals
+maproducts[!is.na(residuals), quant5:=quantile(residuals,0.05)]
+maproducts[!is.na(residuals), quant95:=quantile(residuals,0.95)]
+maproducts[,outlier_small:=as.numeric(residuals<quant5)]
+maproducts[,outlier_great:=as.numeric(residuals>quant95)]
+lm_model2<-lm(formula = log_sold ~ as.factor(month) + price + trend + favored_count + 
+    category_sold + category_brand_sold+lag_1+lag_2+outlier_small+outlier_great, data = maproducts)
+summary(lm_model2)
+
+lm_model2<-lm(formula = log_sold ~ as.factor(month) + price + trend + favored_count + 
+    category_sold + category_brand_sold+lag_1+lag_2+outlier_small, data = maproducts)
+summary(lm_model2)
+
+
+```
+
+As we expected, outliers help our model to predict better.
+In this model,we can add week variable to model to examine its effectiveness in the model.
+
+```{r}
+maproducts[,weeks:=week(event_date)]
+
+head(maproducts)
+lm_model3<- lm(formula = log_sold ~ as.factor(month) + price + trend + favored_count + 
+    category_sold + category_brand_sold+lag_1+lag_2+outlier_small+weeks, data = maproducts)
+summary(lm_model3)
+#take that of
+lm_model2_3<-lm(formula = log_sold ~ as.factor(month) + price + trend + favored_count + 
+    category_sold + category_brand_sold+lag_1+lag_2+outlier_small, data = maproducts)
+summary(lm_model2_3)
+```
+
+For another perspective AIC values of models.
+
+
+```{r}
+require(ursa)
+AIC(lm_model)
+AIC(lm_model2_3)
+AIC(lm_model3)
+```
+
+That proves claim of model with month as factor variable.
+
+Now,It is time for us to come up with arima models.Firstly,we build time series with frequency=7.Plot that.
+
+
+```{r}
+#time series and arima
+ts_sold<-ts(maproducts$log_sold,frequency = 7)
+ts.plot(ts_sold)
+Box.test(ts_sold,lag=7,type="Ljung-Box")
+```
+
+
+Variance is stable enough thanks to taking logarithm of data.Then, decompose time series data with additive type.
+Plot decomposed data
+
+```{r}
+sold_decomp<-decompose(ts_sold,type="additive")
+plot(sold_decomp)
+```
+
+Random part is kind of stationary except some outlier points.
+We shall observe autocorrelation and partial autocorrelation of random part.
+
+```{r}
+random=sold_decomp$random
+#random part looks really fine.
+acf(sold_decomp$random,na.action = na.pass)
+pacf(sold_decomp$random,na.action = na.pass)
+
+```
+
+As we observe from those graphs,we start building arima models with (p,d,q)=(2,0,0) and increase p value to 10 one by one.After this process,we find model with auto arima function.
+Pick the best model.
+
+```{r}
+ar_model<-arima(random,order=c(2,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(3,0,0))
+summary(ar_model)
+ar_model<-arima(random,order=c(4,0,0))
+summary(ar_model)
+
+```
+
+```{r}
+ar_model<-arima(random,order=c(0,0,1))
+summary(ar_model)
+ar_model<-arima(random,order=c(0,0,2))
+summary(ar_model)
+#THAT IS THE ONE
+ar_model9<-arima(random,order=c(0,0,3))
+summary(ar_model)
+ar_model<-arima(random,order=c(0,0,4))
+summary(ar_model)
+```
+
+Best model we have above is the model with (p,d,q)=(0,0,3).
+
+To compare lm and arima models, we should compare them for test period which is from 2021-05-11 to 2021-05-29.
+
+
+```{r}
+train_start=as.Date('2020-05-25')
+test_start=as.Date('2021-05-11')
+test_end=as.Date('2021-05-29')
+
+test_dates=seq(test_start,test_end,by='day')
+test_dates
+```
+
+```{r}
+#forecast with lm model
+forecast_with_lr=function(fmla, data,forecast_data){
+    fitted_lm=lm(as.formula(fmla),data)
+    forecasted=predict(fitted_lm,forecast_data)
+    return(list(forecast=as.numeric(forecasted),model=fitted_lm))
+}
+
+# forecast with ARIMA models
+forecast_with_arima=function(data,forecast_ahead,target_name='log_sold',
+                              is_seasonal=F,is_stepwise=F,is_trace=T,is_approx=F){
+    command_string=sprintf('input_series=data$%s',target_name)
+    print(command_string)
+    eval(parse(text=command_string))
+    
+    fitted=arima(input_series,order=c(9,0,0))
+    
+    forecasted=forecast(fitted,h=forecast_ahead)
+    return(list(forecast=as.numeric(forecasted$mean),model=fitted))
+}
+```
+
+We define our functions with respect to parameters we found above.Then,we forecast for test dates with our lm and arima models separately.
+
+```{r}
+#loop over the test dates
+forecast_ahead=1
+
+
+results=vector('list',length(test_dates))
+i=1
+for(i in 1:length(test_dates)){
+    current_date=test_dates[i]-forecast_ahead
+    print(test_dates[i])
+    past_data=maproducts[event_date<=current_date]
+    forecast_data=maproducts[event_date==test_dates[i]]
+    
+    # first lm models
+    fmla='log_sold ~ as.factor(month) + price + category_sold + 
+    lag_1 + lag_2 + outlier_great'
+    forecasted=forecast_with_lr(fmla,past_data,forecast_data)
+    forecast_data[,lm_prediction:=forecasted$forecast]
+
+    # arima model with auto.arima
+    arima_forecast=forecast_with_arima(past_data,forecast_ahead,'log_sold',is_trace=F)
+    forecast_data[,arima_prediction:=arima_forecast$forecast]
+
+    results[[i]]=forecast_data
+}
+
+overall_results=rbindlist(results)
+
+melted_result=melt(overall_results,c('event_date','log_sold'),c('lm_prediction','arima_prediction'))
+```
+
+We turned the results into melted results(long form).
+
+
+```{r}
+melted_result 
+accu=function(actual,forecast){
+  n=length(actual)
+  error=actual-forecast
+  mean=mean(actual)
+  sd=sd(actual)
+  CV=sd/mean
+  FBias=sum(error)/sum(actual)
+  MAPE=sum(abs(error/actual))/n
+  RMSE=sqrt(sum(error^2)/n)
+  MAD=sum(abs(error))/n
+  MADP=sum(abs(error))/sum(abs(actual))
+  WMAPE=MAD/mean
+  l=data.frame(n,mean,sd,CV,FBias,MAPE,RMSE,MAD,MADP,WMAPE)
+  return(l)
+}
+```
+
+To compare models,we accumulate errors of our models in terms of statistical methods with our accumulation function we defined above.
+
+```{r}
+performance=melted_result[,accu(log_sold,value),by=list(variable)]
+
+performance
+```
+
+First view of data shows that lm prediction is better in terms of MAPE.However,let us see boxplot MAPE and FBias with respect to days of a week.
+
+```{r}
+performance=melted_result[,accu(log_sold,value),by=list(event_date,variable)]
+performance[,day_of_week:=wday(event_date,label=T)]
+
+
+ggplot(performance, aes(x=day_of_week, y=MAPE,fill=variable)) + 
+    geom_boxplot() 
+
+ggplot(performance, aes(x=day_of_week, y=FBias,fill=variable)) + 
+    geom_boxplot() 
+```
+
+As we observe from table,MAPE values of lm prediction is less.They  both tend to predict less.However,lm is better than arima in terms of FBias ,too.
+
+
+So,we forecast with our lm model.Before that,we forecast our parameters by building arima model with auto arima function.
+
+
+```{r}
+price_ts <- ts(maproducts$price, frequency = 7)
+price_dec <- decompose(x = price_ts,type = "additive")
+price_model= auto.arima(price_dec$random)
+AIC(price_model)
+price_model_forecast <- predict(price_model, n.ahead = 15)$pred
+seasonality=price_dec$seasonal[1:1]
+last_trend_value <-tail(price_dec$trend[!is.na(price_dec$trend)],1)
+price_model_forecast=price_model_forecast+last_trend_value+seasonality
+price_model_forecast
+
+
+model_cat<-auto.arima(maproducts$category_sold)
+model_fav<-auto.arima(maproducts$favored_count)
+fav_fcast<-predict(model_fav,n.ahead = 15)$pred
+cat_fcast<-predict(model_cat,n.ahead = 15)$pred
+model_lag_1<-auto.arima(maproducts$lag_1)
+lag1_fcast<-predict(model_lag_1,n.ahead = 15)$pred
+model_lag_2<-auto.arima(maproducts$lag_2)
+lag2_fcast<-predict(model_lag_2,n.ahead = 15)$pred
+model_brand<-auto.arima(maproducts$category_brand_sold)
+brand_fcast<-predict(model_brand,n.ahead = 15)$pred
+model_out<-auto.arima(maproducts$outlier_small)
+small_fcast<-predict(model_out,n.ahead = 15)$pred
+```
+
+Now,we forecast our value with our forecasted parameters.
+
+
+```{r}
+forecast_Log<-predict(lm_model2_3,data.frame(month=as.factor(6) ,price=price_model_forecast[1],trend=373,favored_count=fav_fcast[1],category_sold=cat_fcast[1],category_brand_sold=brand_fcast[1],lag_1=lag1_fcast[1],lag_2=lag2_fcast[1],outlier_small=small_fcast[1]))
+
+
+fcast3<-exp(forecast_Log)
+fcast3
+
+```
+
+
+
+
+
+
+```{r}
+data_path= '/Users/onurcanaydin/Desktop/360\ proje/ProjectRawData.csv'
+daily_data= fread(data_path)
+str(daily_data)
+```
+
+
+# Product 1
+When we look at the sales graph of product 1('mont') , we see that there is no sales in some periods.At first,I thought the reason for this was that the store in trendyol had removed product from the aisle.However,then when I saw that the product was added to the basket and favorites during these non-sale periods, I realized that the reason for this was seasonality.
+
+
+```{r}
+daily_data$event_date <- as.Date(daily_data$event_date, "%d.%m.%Y")
+product1_data <- daily_data[product_content_id==48740784]
+ggplot(product1_data,aes(x=event_date,y=sold_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+```
+
+If we see the sales period more closely:
+
+```{r}
+ggplot(product1_data[as.Date(event_date)<="2021-01-01" & as.Date(event_date)>="2020-10-01"],aes(x=event_date,y=sold_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+```
+
+
+We established both arima and linear regression models for the products.Then we compared these forecasting models and chose the best one.At first, we built a linear regression model using all predictors for product1.
+
+
+```{r}
+product1_reg<-lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold+ty_visits,product1_data)
+summary(product1_reg)
+```
+
+We've seen that basket_count and category_favored are effective predictors.The adjusted R-squared value was also high.The p value of the f test is fine.
+
+
+```{r}
+product1_reg<-lm(sold_count~price+basket_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits,product1_data)
+summary(product1_reg)
+
+```
+
+
+We further increased the adjusted R-squared value by removing redundant predictors.
+We found the forecast values in the train period with the linear model we built and we printed the forecast values over the actual values on the chart.
+
+```{r}
+
+product1_data[,forecast1:=predict(product1_reg,product1_data)]
+ggplot(product1_data,aes(x=event_date))+geom_line(aes(y=sold_count,color='real'),size=1.5)+geom_line(aes(y=forecast1,color='predicted'),size=1.5)+ theme_dark()
+
+```
+
+
+We added a daytype column to the product 1 data table to find out if there is daily seasonality in the sales data.The daytype variable returns from 1 to 7 for days.We also added daytype to the linear model.
+
+```{r}
+day_type <- read_excel("/Users/onurcanaydin/Downloads/daytype.xlsx",range="C1:C372",col_names=FALSE)
+product1_data <- cbind(product1_data, day_type)
+names(product1_data)[15] <- "day_type"
+
+product1_reg<-lm(sold_count~price+basket_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+as.factor(day_type),product1_data)
+summary(product1_reg)
+AIC(product1_reg)
+
+```
+
+The daytype regressor had no significant effect on the model.Therefore, we removed the back daytype from the model.
+
+
+```{r}
+product1_reg<-lm(sold_count~price+basket_count+category_basket+category_favored+ty_visits,product1_data)
+summary(product1_reg)
+AIC(product1_reg)
+```
+
+
+When we look at the graph, the forecast and the actual values overlap in general, only the forecast graph was cut in some periods, this is because the value of the price regressor in our linear regression model was not given in some periods in the excel data that given to us.
+
+
+```{r}
+
+product1_data[,forecast2:=predict(product1_reg,product1_data)]
+ggplot(product1_data,aes(x=event_date))+geom_line(aes(y=sold_count,color='real'),size=1.5)+geom_line(aes(y=forecast2,color='predicted'),size=1.5)+ theme_dark()
+
+```
+
+If we see the sales period more closely:
+
+
+```{r}
+
+ggplot(product1_data[as.Date(event_date)<="2021-01-01" & as.Date(event_date)>="2020-10-01"],aes(x=event_date))+geom_line(aes(y=sold_count,color='real'),size=1.5)+geom_line(aes(y=forecast2,color='predicted'),size=1.5)+ theme_dark()
+
+```
+
+
+
+## ARIMA model for product1
+
+We did decomposition  at daily level for product1.Then, we build arima model with auto arima function.
+
+
+```{r}
+datats <- ts(product1_data$sold_count, start = as.Date("2020-05-25"), end = as.Date("2021-05-31"), frequency = 7)
+ts_decomposed <- decompose(x = datats,type = "additive")
+model= auto.arima(ts_decomposed$random,max.p = 2,
+  max.q = 2)
+AIC(model)
+
+```
+
+
+
+## Forecasting for product1
+
+We compared the aic values of the arima model and the linear model and chose the linear model.In order to be able to forecast with linear model in the test period, we must also forecast the value of regressors by constructing arima models.
+
+### ARIMA models for predictors of Linear Model of Product1
+
+We build arima models by using past data for forecasting predictors or regressors of linear model of product 1.
+
+
+### ARIMA model for Basket_count
+
+we build arima model with decomposing at daily level for basket_count regressor and forecast the value of basket_count on the desired day in competition period.
+
+
+```{r}
+ggplot(product1_data,aes(x=event_date,y=basket_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+ggplot(product1_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-05-01"],aes(x=event_date,y=basket_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+basket_count_ts <- ts(product1_data$basket_count,start = as.Date("2021-05-04"), end = as.Date("2021-05-31"),frequency=7)
+basket_count_dec <- decompose(x = basket_count_ts,type = "additive")
+basket_count_model= auto.arima(basket_count_dec$random)
+AIC(basket_count_model)
+basket_count_model_forecast <- predict(basket_count_model, n.ahead = 16)$pred
+seasonality=basket_count_dec$seasonal[1:16]
+last_trend_value <-tail(basket_count_dec$trend[!is.na(basket_count_dec$trend)],1)
+basket_count_model_forecast=basket_count_model_forecast+last_trend_value+seasonality
+basket_count_model_forecast
+```
+
+
+### ARIMA model for Category_basket
+
+we build arima model with decomposing at daily level for category_basket regressor and forecast the value of category_basket  on the desired day in the  competition period.
+
+
+```{r}
+ggplot(product1_data,aes(x=event_date,y=category_basket))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+
+category_basket_ts <- ts(product1_data$category_basket,start = as.Date("2021-02-10"), end = as.Date("2021-05-31"), frequency = 7)
+category_basket_dec <- decompose(x = category_basket_ts,type = "additive")
+category_basket_model= auto.arima(category_basket_dec$random)
+AIC(category_basket_model)
+category_basket_model_forecast <- predict(category_basket_model, n.ahead = 16)$pred
+seasonality=category_basket_dec$seasonal[1:16]
+last_trend_value <-tail(category_basket_dec$trend[!is.na(category_basket_dec$trend)],1)
+category_basket_model_forecast=category_basket_model_forecast+last_trend_value+seasonality
+category_basket_model_forecast
+
+```
+
+
+### ARIMA model for Category_favored
+
+we build arima model with decomposing at daily level for Category_favored regressor and forecast the value of category_favored on the desired day in the  competition period.
+
+
+```{r}
+ggplot(product1_data,aes(x=event_date,y=category_favored))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+fitted=auto.arima(product1_data$category_favored)
+c=forecast(fitted,h=16)
+category_favored_model_forecast=c$mean
+category_favored_model_forecast
+
+```
+
+
+### ARIMA model for ty_visits
+
+
+
+```{r}
+ggplot(product1_data,aes(x=event_date,y=ty_visits))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+
+ty_visits_ts <- ts(product1_data$ty_visits,start = as.Date("2021-02-07"), end = as.Date("2021-05-31"), frequency = 7)
+ty_visits_dec <- decompose(x = ty_visits_ts,type = "additive")
+ty_visits_model= auto.arima(ty_visits_dec$random)
+AIC(ty_visits_model)
+ty_visits_model_forecast <- predict(ty_visits_model, n.ahead = 16)$pred
+seasonality=ty_visits_dec$seasonal[1:16]
+last_trend_value <-tail(ty_visits_dec$trend[!is.na(ty_visits_dec$trend)],1)
+ty_visits_model_forecast=ty_visits_model_forecast+last_trend_value+seasonality
+ty_visits_model_forecast
+
+
+```
+
+
+### Forecasted value of sales quantity of product 1 in the desired day
+
+
+We made our predictions in the linear model we built by using the fitted values of the regressors we found in the arima models.
+
+
+```{r}
+
+predict(product1_reg,data.frame(price=449.985,basket_count=basket_count_model_forecast[16],category_basket=category_basket_model_forecast[16],category_favored=category_favored_model_forecast[16],ty_visits=ty_visits_model_forecast[16]))
+
+
+```
+
+
+
+
+
+# Product2
+
+
+When we look at the sales chart of product2, it is understood that it is a summer product.Sales volumes showed an upward trend in May.
+
+
+```{r}
+product2_data <- daily_data[product_content_id==73318567]
+ggplot(product2_data,aes(x=event_date,y=sold_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+```
+
+If we see the sales period more closely:
+
+
+```{r}
+
+ggplot(product2_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-04-01"],aes(x=event_date,y=sold_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+```
+
+
+We established both arima and linear regression models for the product 2.Then we compared these forecasting models and chose the best one.At first, we built a linear regression model using all predictors for product2.
+
+
+```{r}
+
+product2_reg<-lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold+ty_visits,product2_data)
+summary(product2_reg)
+```
+
+We've seen that basket_count and category_sold are most effective predictors.The adjusted R-squared value was also very high.The p value of the f test is fine.
+
+
+```{r}
+
+product2_reg<-lm(sold_count~visit_count+basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold+ty_visits,product2_data)
+summary(product2_reg)
+```
+
+
+```{r}
+
+product2_reg<-lm(sold_count~visit_count+basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits,product2_data)
+summary(product2_reg)
+```
+
+```{r}
+
+product2_reg<-lm(sold_count~basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits,product2_data)
+summary(product2_reg)
+```
+
+We further increased the adjusted R-squared value by removing redundant predictors.
+
+
+```{r}
+product2_data <- cbind(product2_data, day_type)
+names(product2_data)[14] <- "day_type"
+product2_reg<-lm(sold_count~basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+as.factor(day_type),product2_data)
+summary(product2_reg)
+
+```
+
+We added a daytype column to the product 1 data table to find out if there is daily seasonality in the sales data.The daytype variable returns from 1 to 7 for days.We also added daytype to the linear model.The daytype regressor had no significant effect on the model.Therefore, we removed the back daytype from the model.
+
+
+```{r}
+product2_reg<-lm(sold_count~basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits,product2_data)
+summary(product2_reg)
+AIC(product2_reg)
+```
+
+## ARIMA model for product2
+
+We did decomposition  at daily level for product1.Then, we build arima model with auto arima function.
+
+
+```{r}
+datats2 <- ts(product2_data$sold_count, start = as.Date("2020-05-25"), end = as.Date("2021-05-31"), frequency = 7)
+ts_dec_add <- decompose(x = datats2,type = "additive")
+model2= auto.arima(ts_dec_add$random,max.p = 2,
+  max.q = 2)
+AIC(model2)
+
+```
+
+
+## Forecasting for product2
+
+We compared the aic values of the arima model and the linear model and chose the linear model.In order to be able to forecast with linear model in the test period, we must also forecast the value of regressors by constructing arima models.
+
+
+### ARIMA models for predictors of Linear Model of Product2
+
+We build arima models by using past data for forecasting predictors or regressors of linear model of product 2.
+
+### ARIMA model for Basket_count
+
+we build arima model with decomposing at daily level for basket_count regressor and forecast the value of basket_count on the desired day in competition period.
+
+
+```{r}
+ggplot(product2_data,aes(x=event_date,y=basket_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+ggplot(product2_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-05-01"],aes(x=event_date,y=basket_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+basket_count_ts <- ts(product2_data$basket_count,start = as.Date("2021-02-09"), end = as.Date("2021-05-31"),frequency=7)
+basket_count_dec <- decompose(x = basket_count_ts,type = "additive")
+basket_count_model= auto.arima(basket_count_dec$random)
+AIC(basket_count_model)
+basket_count_model_forecast <- predict(basket_count_model, n.ahead = 16)$pred
+seasonality=basket_count_dec$seasonal[1:16]
+last_trend_value <-tail(basket_count_dec$trend[!is.na(basket_count_dec$trend)],1)
+basket_count_model_forecast=basket_count_model_forecast+last_trend_value+seasonality
+basket_count_model_forecast
+
+```
+
+
+### ARIMA model for favored_count
+
+we build arima model with decomposing at daily level for favored_count regressor and forecast the value of favored_count  on the desired day in the  competition period.
+
+```{r}
+ggplot(product2_data,aes(x=event_date,y=favored_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+ggplot(product2_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-05-01"],aes(x=event_date,y=favored_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+favored_count_ts <- ts(product2_data$favored_count,start = as.Date("2021-02-13"), end = as.Date("2021-05-31"),frequency=7)
+favored_count_dec <- decompose(x = favored_count_ts,type = "additive")
+favored_count_model= auto.arima(favored_count_dec$random, max.p = 3,
+  max.q = 3)
+AIC(favored_count_model)
+favored_count_model_forecast <- predict(favored_count_model, n.ahead = 16)$pred
+seasonality=favored_count_dec$seasonal[1:16]
+last_trend_value <-tail(favored_count_dec$trend[!is.na(favored_count_dec$trend)],1)
+favored_count_model_forecast=favored_count_model_forecast+last_trend_value+seasonality
+favored_count_model_forecast
+```
+
+### ARIMA model for category_sold
+
+we build arima model with decomposing at daily level for category_sold regressor and forecast the value of category_sold  on the desired day in the  competition period.
+
+
+```{r}
+
+ggplot(product2_data,aes(x=event_date,y=category_sold))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+ggplot(product2_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-05-01"],aes(x=event_date,y=category_sold))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+category_sold_ts <- ts(product2_data$category_sold,start = as.Date("2021-02-13"), end = as.Date("2021-05-31"),frequency=7)
+category_sold_dec <- decompose(x = category_sold_ts,type = "additive")
+category_sold_model= auto.arima(category_sold_dec$random, max.p = 3,
+  max.q = 3)
+AIC(category_sold_model)
+category_sold_model_forecast <- predict(category_sold_model, n.ahead = 16)$pred
+seasonality=category_sold_dec$seasonal[1:16]
+last_trend_value <-tail(category_sold_dec$trend[!is.na(category_sold_dec$trend)],1)
+category_sold_model_forecast=category_sold_model_forecast+last_trend_value+seasonality
+category_sold_model_forecast
+```
+
+
+### ARIMA model for category_basket
+
+
+
+```{r}
+ggplot(product2_data,aes(x=event_date,y=category_basket))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+ggplot(product2_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-05-01"],aes(x=event_date,y=category_basket))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+category_basket_ts <- ts(product2_data$category_basket,start = as.Date("2021-02-13"), end = as.Date("2021-05-31"), frequency = 7)
+category_basket_dec <- decompose(x = category_basket_ts,type = "additive")
+category_basket_model= auto.arima(category_basket_dec$random, max.p = 2,
+  max.q = 2)
+AIC(category_basket_model)
+category_basket_model_forecast <- predict(category_basket_model, n.ahead = 16)$pred
+seasonality=category_basket_dec$seasonal[1:16]
+last_trend_value <-tail(category_basket_dec$trend[!is.na(category_basket_dec$trend)],1)
+category_basket_model_forecast=category_basket_model_forecast+last_trend_value+seasonality
+category_basket_model_forecast
+
+```
+
+
+### ARIMA model for Category_favored
+
+
+```{r}
+fitted=auto.arima(product2_data$category_favored)
+a=forecast(fitted,h=16)
+category_favored_model_forecast=a$mean
+
+```
+
+
+### ARIMA model for Category_brand_sold
+
+
+```{r}
+ggplot(product2_data,aes(x=event_date,y=category_brand_sold))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+category_brand_sold_ts <- ts(product2_data$category_brand_sold,start = as.Date("2021-01-26"), end = as.Date("2021-05-31"), frequency = 7)
+category_brand_sold_dec <- decompose(x = category_brand_sold_ts,type = "additive")
+category_brand_sold_model= auto.arima(category_brand_sold_dec$random, max.p = 2,
+  max.q = 2)
+AIC(category_brand_sold_model)
+category_brand_sold_model_forecast <- predict(category_brand_sold_model, n.ahead = 16)$pred
+seasonality=category_brand_sold_dec$seasonal[1:16]
+last_trend_value <-tail(category_brand_sold_dec$trend[!is.na(category_brand_sold_dec$trend)],1)
+category_brand_sold_model_forecast=category_brand_sold_model_forecast+last_trend_value+seasonality
+category_brand_sold_model_forecast
+
+```
+
+
+### ARIMA model for ty_visits
+
+
+```{r}
+ggplot(product2_data,aes(x=event_date,y=ty_visits))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+
+ty_visits_ts <- ts(product2_data$ty_visits,start = as.Date("2021-01-31"), end = as.Date("2021-05-31"), frequency = 7)
+ty_visits_dec <- decompose(x = ty_visits_ts,type = "additive")
+ty_visits_model= auto.arima(ty_visits_dec$random)
+AIC(ty_visits_model)
+ty_visits_model_forecast <- predict(ty_visits_model, n.ahead = 16)$pred
+seasonality=ty_visits_dec$seasonal[1:16]
+last_trend_value <-tail(ty_visits_dec$trend[!is.na(ty_visits_dec$trend)],1)
+ty_visits_model_forecast=ty_visits_model_forecast+last_trend_value+seasonality
+ty_visits_model_forecast
+
+```
+
+
+### Forecasted value of sales quantity of product 2 in the desired day
+
+We made our predictions in the linear model we built by using the fitted values of the regressors we found in the arima models.
+
+
+```{r}
+
+predict(product2_reg,data.frame(basket_count=basket_count_model_forecast[16],favored_count=favored_count_model_forecast[16],category_sold=category_sold_model_forecast[16],category_basket=category_basket_model_forecast[16], category_favored=category_favored_model_forecast[16],category_brand_sold=category_brand_sold_model_forecast[16], ty_visits=ty_visits_model_forecast[16]))
+
+
+```
+
+
+
+
+# Product 3
+
+Product3 is the product of the same category as product2.Sales increase during and before the summer months.
+
+
+```{r}
+product3_data <- daily_data[product_content_id==32737302]
+ggplot(product3_data,aes(x=event_date,y=sold_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+```
+
+
+If we see the sales period more closely:
+
+```{r}
+
+ggplot(product3_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-02-01"],aes(x=event_date,y=sold_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+```
+
+
+We constructed a linear regression model for product3 using all predictors.
+
+
+```{r}
+
+product3_reg<-lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold+ty_visits,product3_data)
+summary(product3_reg)
+```
+
+We've seen that basket_count, category_sold and category_favored are  effective predictors.The adjusted R-squared value was also high.The p value of the f test is fine.
+
+
+```{r}
+
+product3_reg<-lm(sold_count~basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold,product3_data)
+summary(product3_reg)
+AIC(product3_reg)
+```
+
+
+We further increased the adjusted R-squared value by removing redundant predictors.
+
+
+```{r}
+product3_data <- cbind(product3_data, day_type)
+names(product3_data)[14] <- "day_type"
+product3_reg<-lm(sold_count~basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold+as.factor(day_type),product3_data)
+summary(product3_reg)
+
+
+```
+
+We added the day type regressor to the model, if the data includes daily seasonality, the model is expected to improve.
+The daytype regressor had no significant effect on the model.Therefore, we removed  daytype regressor from the model.
+
+
+```{r}
+
+product3_reg<-lm(sold_count~basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold,product3_data)
+summary(product3_reg)
+AIC(product3_reg)
+```
+
+
+
+
+## ARIMA model for product 3
+
+We did decomposition  at daily level for product1.Then, we build arima model with auto arima function.
+
+
+```{r}
+datats3 <- ts(product3_data$sold_count, start = as.Date("2020-05-25"), end = as.Date("2021-05-31"), frequency = 7)
+ts_dec_add2 <- decompose(x = datats3,type = "additive")
+plot(ts_dec_add2)
+model3= auto.arima(ts_dec_add2$random,max.p = 2,
+  max.q = 2)
+AIC(model3)
+
+```
+
+
+## Forecasting for product3
+
+We compared the aic values of the arima model and the linear model and chose the linear model.In order to be able to forecast with linear model in the test period, we must also forecast the value of regressors by constructing arima models.
+
+
+### ARIMA models for predictors of Linear Model of Product3
+
+We build arima models by using past data for forecasting predictors or regressors of linear model of product 3.
+
+### ARIMA model for Basket_count
+
+we build arima model with decomposing at daily level for basket_count regressor and forecast the value of basket_count on the desired day in competition period.
+
+
+```{r}
+ggplot(product3_data,aes(x=event_date,y=basket_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+ggplot(product3_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-05-01"],aes(x=event_date,y=basket_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+basket_count_ts <- ts(product3_data$basket_count,start = as.Date("2021-02-13"), end = as.Date("2021-05-31"),frequency=7)
+basket_count_dec <- decompose(x = basket_count_ts,type = "additive")
+basket_count_model= auto.arima(basket_count_dec$random)
+AIC(basket_count_model)
+basket_count_model_forecast <- predict(basket_count_model, n.ahead = 16)$pred
+seasonality=basket_count_dec$seasonal[1:16]
+last_trend_value <-tail(basket_count_dec$trend[!is.na(basket_count_dec$trend)],1)
+basket_count_model_forecast=basket_count_model_forecast+last_trend_value+seasonality
+basket_count_model_forecast
+```
+
+
+### ARIMA model for favored_count
+
+
+```{r}
+ggplot(product3_data,aes(x=event_date,y=favored_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+ggplot(product3_data[as.Date(event_date)<="2021-05-31" & as.Date(event_date)>="2021-05-01"],aes(x=event_date,y=favored_count))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+favored_count_ts <- ts(product3_data$favored_count,start = as.Date("2021-02-13"), end = as.Date("2021-05-31"),frequency=7)
+favored_count_dec <- decompose(x = favored_count_ts,type = "additive")
+favored_count_model= auto.arima(favored_count_dec$random)
+AIC(favored_count_model)
+favored_count_model_forecast <- predict(favored_count_model, n.ahead = 16)$pred
+seasonality=favored_count_dec$seasonal[1:16]
+last_trend_value <-tail(favored_count_dec$trend[!is.na(favored_count_dec$trend)],1)
+favored_count_model_forecast=favored_count_model_forecast+last_trend_value+seasonality
+favored_count_model_forecast
+```
+
+
+### ARIMA model for category_sold
+
+
+```{r}
+
+ggplot(product3_data,aes(x=event_date,y=category_sold))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+category_sold_ts <- ts(product3_data$category_sold,start = as.Date("2021-04-07"), end = as.Date("2021-05-31"),frequency=7)
+category_sold_dec <- decompose(x = category_sold_ts,type = "additive")
+category_sold_model= auto.arima(category_sold_dec$random)
+AIC(category_sold_model)
+category_sold_model_forecast <- predict(category_sold_model, n.ahead = 16)$pred
+seasonality=category_sold_dec$seasonal[1:16]
+last_trend_value <-tail(category_sold_dec$trend[!is.na(category_sold_dec$trend)],1)
+category_sold_model_forecast=category_sold_model_forecast+last_trend_value+seasonality
+category_sold_model_forecast
+```
+
+
+### ARIMA model for category_visits
+
+
+```{r}
+
+ggplot(product3_data,aes(x=event_date,y=category_visits))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+category_visits_ts <- ts(product3_data$category_visits,start = as.Date("2021-04-07"), end = as.Date("2021-05-31"),frequency=7)
+category_visits_dec <- decompose(x = category_visits_ts,type = "additive")
+category_visits_model= auto.arima(category_visits_dec$random, max.p = 3,
+  max.q = 3)
+AIC(category_visits_model)
+category_visits_model_forecast <- predict(category_visits_model, n.ahead = 16)$pred
+seasonality=category_visits_dec$seasonal[1:16]
+last_trend_value <-tail(category_visits_dec$trend[!is.na(category_visits_dec$trend)],1)
+category_visits_model_forecast=category_visits_model_forecast+last_trend_value+seasonality
+category_visits_model_forecast=abs(category_visits_model_forecast)
+category_visits_model_forecast
+
+```
+
+
+### ARIMA model for category_basket
+
+
+```{r}
+ggplot(product3_data,aes(x=event_date,y=category_basket))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+category_basket_ts <- ts(product3_data$category_basket,start = as.Date("2021-02-13"), end = as.Date("2021-05-31"), frequency = 7)
+category_basket_dec <- decompose(x = category_basket_ts,type = "additive")
+category_basket_model= auto.arima(category_basket_dec$random, max.p = 2,
+  max.q = 2)
+AIC(category_basket_model)
+category_basket_model_forecast <- predict(category_basket_model, n.ahead = 16)$pred
+seasonality=category_basket_dec$seasonal[1:16]
+last_trend_value <-tail(category_basket_dec$trend[!is.na(category_basket_dec$trend)],1)
+category_basket_model_forecast=category_basket_model_forecast+last_trend_value+seasonality
+category_basket_model_forecast
+
+```
+
+
+### ARIMA model for Category_favored
+
+
+```{r}
+fitted=auto.arima(product3_data$category_favored)
+b=forecast(fitted,h=16)
+category_favored_model_forecast=b$mean
+category_favored_model_forecast
+
+```
+
+
+### ARIMA model for Category_brand_sold
+
+
+```{r}
+ggplot(product3_data,aes(x=event_date,y=category_brand_sold))+ geom_line(colour = "firebrick2",size = 1.5)+ theme_dark()
+
+category_brand_sold_ts <- ts(product3_data$category_brand_sold,start = as.Date("2021-01-31"), end = as.Date("2021-05-31"), frequency = 7)
+category_brand_sold_dec <- decompose(x = category_brand_sold_ts,type = "additive")
+category_brand_sold_model= auto.arima(category_brand_sold_dec$random, max.p = 2,
+  max.q = 2)
+AIC(category_brand_sold_model)
+category_brand_sold_model_forecast <- predict(category_brand_sold_model, n.ahead = 16)$pred
+seasonality=category_brand_sold_dec$seasonal[1:16]
+last_trend_value <-tail(category_brand_sold_dec$trend[!is.na(category_brand_sold_dec$trend)],1)
+category_brand_sold_model_forecast=category_brand_sold_model_forecast+last_trend_value+seasonality
+category_brand_sold_model_forecast
+
+```
+
+
+### Forecasted value of sales quantity of product 3 in the desired day
+
+We made our predictions in the linear model we built by using the fitted values of the regressors we found in the arima models.
+
+
+```{r}
+
+predict(product3_reg,data.frame(basket_count=basket_count_model_forecast[16],favored_count=favored_count_model_forecast[16],category_sold=category_sold_model_forecast[16],category_visits=category_visits_model_forecast[16],category_basket=category_basket_model_forecast[16], category_favored=category_favored_model_forecast[16],category_brand_sold=category_brand_sold_model_forecast[16]))
+
+
+```
+
+
+## Including Plots
+```{r pressure, echo=FALSE}
+data_path='/Users/onurcanaydin/Desktop/360\ proje/ProjectRawData.csv'
+projectdata<-fread(data_path)
+
+```
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+
+IslakMendil<-projectdata[product_content_id==4066298]
+head(IslakMendil)
+ts.plot(IslakMendil[,c("sold_count")],main="Daily Sales Quantity",xlab="Time",ylab="Sales Quantity")
+```
+In the plot we can see that sales quantity goes costant most of the time but sometimes there are huge increases probably due to the discounts.
+
+
+We are adding month, day, trend attributes to the data in order to better check and we are taking the logarithm of the sold_count in order to reduce the variance's effect.
+```{r pressure, echo=FALSE}
+IslakMendil[,month:=month(event_date)]
+IslakMendil[,day:=lubridate::wday(event_date)]
+IslakMendil[,trend:=1:.N]
+IslakMendil[,log_sold:=log(sold_count)]
+ts.plot(IslakMendil[,c("log_sold")],main="Daily Log Sales Quantity",xlab="Time",ylab="Sales Quantity Log")
+
+```
+
+## Regression Models
+
+After trying lots of models, the final model is like that with 0.9462 Adjusted R Squared value.
+```{r pressure, echo=FALSE}
+lmIslakMendil <- lm(sold_count~basket_count+category_sold+category_visits+category_favored+category_brand_sold, data = IslakMendil)
+summary(lmIslakMendil)
+checkresiduals(lmIslakMendil)
+```
+Residuals have zero mean and around zero variance except extraordinary a few points. Residuals look like normally distributed.
+
+
+
+##Decomposing
+
+We took the logarithm of the model and we will go with the additive decomposition.
+
+```{r}
+#time series and arima
+tsIslakMendil<-ts(IslakMendil$sold_count,frequency = 7)
+ts.plot(tsIslakMendil)
+
+
+decompIslakMendil<-decompose(tsIslakMendil,type="additive")
+
+acf(tsIslakMendil)
+pacf(tsIslakMendil)
+
+finalARIMAmodel2 <- arima(decompIslakMendil$random,order=c(0,0,1))
+finalARIMAmodel2
+
+```
+By checking the ACF and PACF plots, we decided to create ARIMA(0,0,1) models.
+
+
+##ARIMA Models of Attributes
+
+### ARIMA model for Basket_count
+
+
+```{r}
+
+
+basket_count_ts <- ts(IslakMendil$basket_count,start = as.Date("2021-01-04"), end = as.Date("2021-05-31"),frequency=7)
+basket_count_dec <- decompose(x = basket_count_ts,type = "additive")
+basket_count_model= auto.arima(basket_count_dec$random)
+AIC(basket_count_model)
+basket_count_model_forecast <- predict(basket_count_model, n.ahead = 1)$pred
+seasonality=basket_count_dec$seasonal[1:1]
+last_trend_value <-tail(basket_count_dec$trend[!is.na(basket_count_dec$trend)],1)
+basket_count_model_forecast=basket_count_model_forecast+last_trend_value+seasonality
+basket_count_model_forecast
+```
+
+
+
+### ARIMA model for Category_sold
+
+
+```{r}
+
+
+category_sold_ts <- ts(IslakMendil$category_sold,start = as.Date("2021-02-10"), end = as.Date("2021-05-31"), frequency = 7)
+category_sold_dec <- decompose(x = category_sold_ts,type = "additive")
+category_sold_model= auto.arima(category_sold_dec$random)
+AIC(category_sold_model)
+category_sold_model_forecast <- predict(category_sold_model, n.ahead = 1)$pred
+seasonality=category_sold_dec$seasonal[1:1]
+last_trend_value <-tail(category_sold_dec$trend[!is.na(category_sold_dec$trend)],1)
+category_sold_model_forecast=category_sold_model_forecast+last_trend_value+seasonality
+category_sold_model_forecast
+
+```
+
+
+### ARIMA model for Category_favored
+
+
+
+```{r}
+
+
+category_favored_ts <- ts(IslakMendil$category_favored,start = as.Date("2021-02-10"), end = as.Date("2021-05-31"), frequency = 7)
+category_favored_dec <- decompose(x = category_favored_ts,type = "additive")
+category_favored_model= auto.arima(category_favored_dec$random)
+AIC(category_favored_model)
+category_favored_model_forecast <- predict(category_favored_model, n.ahead = 1)$pred
+seasonality=category_favored_dec$seasonal[1:1]
+last_trend_value <-tail(category_favored_dec$trend[!is.na(category_favored_dec$trend)],1)
+category_favored_model_forecast=category_favored_model_forecast+last_trend_value+seasonality
+category_favored_model_forecast
+
+```
+
+
+### ARIMA model for Category_visits
+
+
+
+```{r}
+
+
+category_visits_ts <- ts(IslakMendil$category_visits,start = as.Date("2021-02-10"), end = as.Date("2021-05-31"), frequency = 7)
+category_visits_dec <- decompose(x = category_visits_ts,type = "additive")
+category_visits_model= auto.arima(category_visits_dec$random)
+AIC(category_visits_model)
+category_visits_model_forecast <- predict(category_visits_model, n.ahead = 1)$pred
+seasonality=category_visits_dec$seasonal[1:1]
+last_trend_value <-tail(category_visits_dec$trend[!is.na(category_visits_dec$trend)],1)
+category_visits_model_forecast=category_visits_model_forecast+last_trend_value+seasonality
+category_visits_model_forecast
+
+```
+
+
+
+### ARIMA model for Category_brand_sold
+
+
+
+```{r}
+
+
+category_brand_sold_ts <- ts(IslakMendil$category_brand_sold,start = as.Date("2021-02-10"), end = as.Date("2021-05-31"), frequency = 7)
+category_brand_sold_dec <- decompose(x = category_brand_sold_ts,type = "additive")
+category_brand_sold_model= auto.arima(category_brand_sold_dec$random)
+AIC(category_brand_sold_model)
+category_brand_sold_model_forecast <- predict(category_brand_sold_model, n.ahead = 1)$pred
+seasonality=category_brand_sold_dec$seasonal[1:1]
+last_trend_value <-tail(category_brand_sold_dec$trend[!is.na(category_brand_sold_dec$trend)],1)
+category_brand_sold_model_forecast=category_brand_sold_model_forecast+last_trend_value+seasonality
+category_brand_sold_model_forecast
+
+```
+We have forecasted the regressors belong to the lmIslakMendil model, now, we will predict the sold_quantity.
+
+
+## Prediction
+```{r}
+
+predict(lmIslakMendil,data.frame(basket_count=basket_count_model_forecast,category_sold=category_sold_model_forecast,category_favored=category_favored_model_forecast,category_visits=category_visits_model_forecast,category_brand_sold=category_brand_sold_model_forecast))
+
+
+```
+
+Our prediction for the quantity sold is 430.6934
+
+
+```{r}
+
+head(IslakMendil$sold_count,50)
+
+
+```
+
+
+
+##YuzTemizleyici
+
+```{r pressure, echo=FALSE}
+YuzTemizleyici<-projectdata[product_content_id==85004]
+head(YuzTemizleyici)
+summary(YuzTemizleyici)
+ts.plot(YuzTemizleyici[,c("sold_count")],main="Daily Sales Quantity",xlab="Time",ylab="Sales Quantity")
+
+acf(YuzTemizleyici$sold_count, lag.max = 90)
+
+```
+From the Daily Sales Quantity graph, we see some seasonality. Also, there are two separate means which is splitted approximately at Time 200.
+
+Also, we can mention some outliers and we want to avoid from these outliers.
+
+If we check the autocorrelation, we see decreasing trend and some pattern at the level of lag=90, which implies that there is a trend and seasonality in the sales data.
+
+
+```{r warning=FALSE, message=FALSE}
+for(i in 1:length(YuzTemizleyici$sold_count)){
+    
+    if(YuzTemizleyici$sold_count[i]>= 200){
+        YuzTemizleyici$sold_count[i]=mean(YuzTemizleyici$sold_count[i-7:i+7])
+        
+    }
+    
+}
+ts.plot(YuzTemizleyici[,c("sold_count")],main="Daily Sales Quantity",xlab="Time",ylab="Sales Quantity")
+acf(YuzTemizleyici$sold_count, lag.max = 90)
+
+```
+We determined a sales quantity level, which is 200 and choose these points as outliers. In order to get rid of outliers, we take the average of closest 15 days to the outlier points and assigned these new value to the outlier point.In this way, we get rid of outliers but autocorrelation function gives higher results.
+
+
+## Regression Model
+
+We add day, month and trend columns to the data.
+
+Since the variance looks high and getting higher, we take the log of the sold_count.
+```{r pressure, echo=FALSE}
+YuzTemizleyici[,month:=month(event_date)]
+YuzTemizleyici[,day:=lubridate::wday(event_date)]
+YuzTemizleyici[,trend:=1:.N]
+YuzTemizleyici[,log_sold:=log(sold_count)]
+ts.plot(YuzTemizleyici[,c("log_sold")],main="Daily Log Sales Quantity",xlab="Time",ylab="Sales Quantity Log")
+
+```
+From now on, we will be trying different lm models with different attributes and we want to achieve the best regresssion model.
+
+```{r}
+lmYuzTemizleyici <- lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_visits+category_basket+category_favored+category_brand_sold+ty_visits+month+day+trend, data = YuzTemizleyici)
+summary(lmYuzTemizleyici)
+```
+
+
+```{r}
+lmYuzTemizleyici <- lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+month+trend, data = YuzTemizleyici)
+summary(lmYuzTemizleyici)
+```
+```{r}
+lmYuzTemizleyici <- lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+month+trend+as.factor(day), data = YuzTemizleyici)
+summary(lmYuzTemizleyici)
+lmYuzTemizleyici <- lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+as.factor(month)+as.factor(day), data = YuzTemizleyici)
+summary(lmYuzTemizleyici)
+lmYuzTemizleyici <- lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+as.factor(month)+trend+as.factor(day), data = YuzTemizleyici)
+summary(lmYuzTemizleyici)
+
+```
+
+Up to now, we've achieved 0.8159 Adjusted R-Squared value. 
+
+We're adding the Residual attribute:
+```{r}
+
+YuzTemizleyici <- YuzTemizleyici[, Residual:=0]
+YuzTemizleyici$Residual[1]=NA
+YuzTemizleyici$Residual[2:372] <- residuals(lmYuzTemizleyici)[1:371]
+lmYuzTemizleyici <- lm(log_sold~price+visit_count+basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+month+trend+as.factor(day)+Residual, data = YuzTemizleyici)
+
+summary(lmYuzTemizleyici)
+
+```
+We're adding the lag_1 attribute:
+```{r}
+
+YuzTemizleyici[, lag_1:= NA]
+YuzTemizleyici$lag_1[2:372] <- YuzTemizleyici$sold_count[1:371]
+
+lmYuzTemizleyici <- lm(sold_count~price+visit_count+basket_count+favored_count+category_sold+category_basket+category_favored+category_brand_sold+ty_visits+as.factor(month)+trend+as.factor(day)+Residual+lag_1, data = YuzTemizleyici)
+summary(lmYuzTemizleyici)
+
+AIC(lmYuzTemizleyici)
+
+#this is the best model I can achieve.
+```
+With the 0.8224 Adjusted R-squared value, this is the best model we achieved.
+
+
+
+```{r}
+checkresiduals(lmYuzTemizleyici)
+```
+Residuals seem have 0 mean, although the variance increases at some points.
+There aren't any significant autocorrelation and residuals looks like normally distributed.
+
+
+##Decomposing the Data
+```{r}
+#time series and arima
+tsYuzTemizleyici<-ts(YuzTemizleyici$log_sold, frequency=7)
+ts.plot(tsYuzTemizleyici)
+
+finaldecompYuzTemizleyici<-decompose(tsYuzTemizleyici,type="additive")
+plot(finaldecompYuzTemizleyici)
+
+
+auto.arima(finaldecompYuzTemizleyici$random,seasonal = FALSE,trace=TRUE)
+
+
+YTARIMAmodel2 <- arima(finaldecompYuzTemizleyici$random,order=c(3,0,1))
+YTARIMAmodel2
+AIC(YTARIMAmodel2)
+```
+
+
+##ARIMA Models for Attributes
+
+We've created ARIMA models for the attributes in the our final regression model. In order to predict sold quantity, we have to predict attributes first. 
+
+### ARIMA model for Price
+
+
+```{r}
+
+price_ts <- ts(YuzTemizleyici$price,start = as.Date("2021-05-04"), end = as.Date("2021-05-31"),frequency=7)
+price_dec <- decompose(x = price_ts,type = "additive")
+price_model= auto.arima(price_dec$random)
+AIC(price_model)
+price_model_forecast <- predict(price_model, n.ahead = 1)$pred
+seasonality=price_dec$seasonal[1:1]
+last_trend_value <-tail(price_dec$trend[!is.na(price_dec$trend)],1)
+price_model_forecast=price_model_forecast+last_trend_value+seasonality
+price_model_forecast
+```
+
+### ARIMA model for visit_count
+
+```{r}
+
+
+visit_count_ts <- ts(YuzTemizleyici$visit_count,start = as.Date("2021-01-28"), end = as.Date("2021-05-31"),frequency=7)
+visit_count_dec <- decompose(x = visit_count_ts,type = "additive")
+visit_count_model= auto.arima(visit_count_dec$random)
+AIC(visit_count_model)
+visit_count_model_forecast <- predict(visit_count_model, n.ahead =1)$pred
+seasonality=visit_count_dec$seasonal[1:1]
+last_trend_value <-tail(visit_count_dec$trend[!is.na(visit_count_dec$trend)],1)
+visit_count_model_forecast=visit_count_model_forecast+last_trend_value+seasonality
+visit_count_model_forecast
+```
+
+
+
+### ARIMA model for basket_count
+
+```{r}
+
+
+basket_count_ts <- ts(YuzTemizleyici$basket_count,start = as.Date("2021-04-28"), end = as.Date("2021-05-31"),frequency=7)
+basket_count_dec <- decompose(x = basket_count_ts,type = "additive")
+basket_count_model= auto.arima(basket_count_dec$random)
+AIC(basket_count_model)
+basket_count_model_forecast <- predict(basket_count_model, n.ahead = 1)$pred
+seasonality=basket_count_dec$seasonal[1:1]
+last_trend_value <-tail(basket_count_dec$trend[!is.na(basket_count_dec$trend)],1)
+basket_count_model_forecast=basket_count_model_forecast+last_trend_value+seasonality
+basket_count_model_forecast
+```
+
+
+### ARIMA model for favored_count
+
+
+```{r}
+
+
+favored_count_ts <- ts(YuzTemizleyici$favored_count,start = as.Date("2021-01-28"), end = as.Date("2021-05-31"),frequency=7)
+favored_count_dec <- decompose(x = favored_count_ts,type = "additive")
+favored_count_model= auto.arima(favored_count_dec$random)
+AIC(favored_count_model)
+favored_count_model_forecast <- predict(favored_count_model, n.ahead = 1)$pred
+seasonality=favored_count_dec$seasonal[1:1]
+last_trend_value <-tail(favored_count_dec$trend[!is.na(favored_count_dec$trend)],1)
+favored_count_model_forecast=favored_count_model_forecast+last_trend_value+seasonality
+favored_count_model_forecast
+```
+
+### ARIMA model for category_sold
+
+
+```{r}
+
+
+category_sold_ts <- ts(YuzTemizleyici$category_sold,start = as.Date("2021-04-28"), end = as.Date("2021-05-31"),frequency=7)
+category_sold_dec <- decompose(x = category_sold_ts,type = "additive")
+category_sold_model= auto.arima(category_sold_dec$random)
+AIC(category_sold_model)
+category_sold_model_forecast <- predict(category_sold_model, n.ahead = 1)$pred
+seasonality=category_sold_dec$seasonal[1:1]
+last_trend_value <-tail(category_sold_dec$trend[!is.na(category_sold_dec$trend)],1)
+category_sold_model_forecast=category_sold_model_forecast+last_trend_value+seasonality
+category_sold_model_forecast
+```
+
+### ARIMA model for category_basket
+
+
+```{r}
+
+
+category_basket_ts <- ts(YuzTemizleyici$category_basket,start = as.Date("2021-01-28"), end = as.Date("2021-05-31"),frequency=7)
+category_basket_dec <- decompose(x = category_basket_ts,type = "additive")
+category_basket_model= auto.arima(category_basket_dec$random)
+AIC(category_basket_model)
+category_basket_model_forecast <- predict(category_basket_model, n.ahead =1)$pred
+seasonality=category_basket_dec$seasonal[1:1]
+last_trend_value <-tail(category_basket_dec$trend[!is.na(category_basket_dec$trend)],1)
+category_basket_model_forecast=category_basket_model_forecast+last_trend_value+seasonality
+category_basket_model_forecast
+```
+### ARIMA model for category_favored
+
+
+```{r}
+
+
+category_favored_ts <- ts(YuzTemizleyici$category_favored,start = as.Date("2021-04-28"), end = as.Date("2021-05-31"),frequency=7)
+category_favored_dec <- decompose(x = category_favored_ts,type = "additive")
+category_favored_model= auto.arima(category_favored_dec$random)
+AIC(category_favored_model)
+category_favored_model_forecast <- predict(category_favored_model, n.ahead =1)$pred
+seasonality=category_favored_dec$seasonal[1:1]
+last_trend_value <-tail(category_favored_dec$trend[!is.na(category_favored_dec$trend)],1)
+category_favored_model_forecast=category_favored_model_forecast+last_trend_value+seasonality
+category_favored_model_forecast
+```
+
+### ARIMA model for category_brand_sold
+
+
+```{r}
+
+
+category_brand_sold_ts <- ts(YuzTemizleyici$category_brand_sold,start = as.Date("2021-01-28"), end = as.Date("2021-05-31"),frequency=7)
+category_brand_sold_dec <- decompose(x = category_brand_sold_ts,type = "additive")
+category_brand_sold_model= auto.arima(category_brand_sold_dec$random)
+AIC(category_brand_sold_model)
+category_brand_sold_model_forecast <- predict(category_brand_sold_model, n.ahead = 1)$pred
+seasonality=category_brand_sold_dec$seasonal[1:1]
+last_trend_value <-tail(category_brand_sold_dec$trend[!is.na(category_brand_sold_dec$trend)],1)
+category_brand_sold_model_forecast=category_brand_sold_model_forecast+last_trend_value+seasonality
+category_brand_sold_model_forecast
+```
+
+
+### ARIMA model for ty_visits
+
+
+```{r}
+
+
+ty_visits_ts <- ts(YuzTemizleyici$ty_visits,start = as.Date("2021-01-28"), end = as.Date("2021-05-31"),frequency=7)
+ty_visits_dec <- decompose(x = ty_visits_ts,type = "additive")
+ty_visits_model= auto.arima(ty_visits_dec$random)
+AIC(ty_visits_model)
+ty_visits_model_forecast <- predict(ty_visits_model, n.ahead = 1)$pred
+seasonality=ty_visits_dec$seasonal[1:1]
+last_trend_value <-tail(ty_visits_dec$trend[!is.na(ty_visits_dec$trend)],1)
+ty_visits_model_forecast=ty_visits_model_forecast+last_trend_value+seasonality
+ty_visits_model_forecast
+```
+
+### ARIMA model for Residuals
+
+
+```{r}
+
+
+Residual_ts <- ts(YuzTemizleyici$Residual,start = as.Date("2021-04-28"), end = as.Date("2021-05-31"),frequency=7)
+Residual_dec <- decompose(x = Residual_ts,type = "additive")
+Residual_model= auto.arima(Residual_dec$random)
+AIC(Residual_model)
+Residual_model_forecast <- predict(Residual_model, n.ahead = 1)$pred
+seasonality=Residual_dec$seasonal[1:1]
+last_trend_value <-tail(Residual_dec$trend[!is.na(Residual_dec$trend)],1)
+Residual_model_forecast=Residual_model_forecast+last_trend_value+seasonality
+Residual_model_forecast
+```
+
+
+### ARIMA model for lag_1
+
+
+```{r}
+
+
+lag_1_ts <- ts(YuzTemizleyici$lag_1,start = as.Date("2021-04-28"), end = as.Date("2021-05-31"),frequency=7)
+lag_1_dec <- decompose(x = lag_1_ts,type = "additive")
+lag_1_model= auto.arima(lag_1_dec$random)
+AIC(lag_1_model)
+lag_1_model_forecast <- predict(lag_1_model, n.ahead = 1)$pred
+seasonality=lag_1_dec$seasonal[1:1]
+last_trend_value <-tail(lag_1_dec$trend[!is.na(lag_1_dec$trend)],1)
+lag_1_model_forecast=lag_1_model_forecast+last_trend_value+seasonality
+lag_1_model_forecast
+```
+We've forecasted the attributes until now. 
+
+##Prediction
+
+```{r}
+
+predict(lmYuzTemizleyici,data.frame(price=price_model_forecast,visit_count=visit_count_model_forecast, basket_count=basket_count_model_forecast,favored_count=favored_count_model_forecast,category_sold=category_sold_model_forecast,category_basket=category_basket_model_forecast, category_favored=category_favored_model_forecast,category_brand_sold=category_brand_sold_model_forecast,ty_visits=ty_visits_model_forecast,  month= as.factor(6), trend=0, day=as.factor(3), Residual=Residual_model_forecast, lag_1=lag_1_model_forecast))
+
+
+```
+Our prediction for YuzTemizleyici sold quantity is 80.90704
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+DisFircasi<-projectdata[product_content_id==32939029]
+(DisFircasi)
+summary(DisFircasi)
+ts.plot(DisFircasi[,c("sold_count")],main="Daily Sales Quantity",xlab="Time",ylab="Sales Quantity")
+```
+In the plot we can the increasing trend in the sales quantities. Since there is a big shift in the number of sales, we will only use the values between 1:150
+
+
+
+```{r pressure, echo=FALSE}
+DisFircasi<-DisFircasi[1:150]
+ts.plot(DisFircasi[,c("sold_count")],main="Daily Sales Quantity",xlab="Time",ylab="Sales Quantity")
+```
+We are adding month, day, trend attributes to the data in order to better check.
+
+```{r pressure, echo=FALSE}
+DisFircasi[,month:=month(event_date)]
+DisFircasi[,day:=lubridate::wday(event_date)]
+DisFircasi[,trend:=1:.N]
+
+```
+
+
+##Regression Model
+
+
+After trying lots of models, the best regression model I achived is like that with 0.8655 adjusted R squared value.
+```{r}
+
+
+lmDisFircasi<- lm(sold_count~basket_count+favored_count+category_sold+category_favored+category_brand_sold, data = DisFircasi)
+summary(lmDisFircasi)
+
+#this is the best model I can achieve.
+```
+
+##Decomposing
+
+```{r}
+#time series and arima
+tsDisFircasi<-ts(DisFircasi$sold_count,frequency = 7)
+
+
+
+decompDisFircasi<-decompose(tsDisFircasi,type="additive")
+
+
+finalARIMAmodel3 <- arima(decompDisFircasi$random,order=c(1,0,5))
+AIC(finalARIMAmodel3)
+
+```
+
+
+##ARIMA Models of Attributes
+
+
+### ARIMA model for Basket_count
+
+
+```{r}
+
+
+basket_count_ts <- ts(DisFircasi$basket_count,start = as.Date("2021-04-26"), end = as.Date("2021-05-31"),frequency=7)
+basket_count_dec <- decompose(x = basket_count_ts,type = "additive")
+basket_count_model= auto.arima(basket_count_dec$random)
+AIC(basket_count_model)
+basket_count_model_forecast <- predict(basket_count_model, n.ahead =1)$pred
+seasonality=basket_count_dec$seasonal[1:1]
+last_trend_value <-tail(basket_count_dec$trend[!is.na(basket_count_dec$trend)],1)
+basket_count_model_forecast=basket_count_model_forecast+last_trend_value+seasonality
+basket_count_model_forecast
+```
+
+### ARIMA model for Favored_count
+
+
+```{r}
+
+
+favored_count_ts <- ts(DisFircasi$favored_count,start = as.Date("2021-04-26"), end = as.Date("2021-05-31"), frequency = 7)
+favored_count_dec <- decompose(x = favored_count_ts,type = "additive")
+favored_count_model= auto.arima(favored_count_dec$random)
+AIC(favored_count_model)
+favored_count_model_forecast <- predict(favored_count_model, n.ahead = 1)$pred
+seasonality=favored_count_dec$seasonal[1:1]
+last_trend_value <-tail(favored_count_dec$trend[!is.na(favored_count_dec$trend)],1)
+favored_count_model_forecast=favored_count_model_forecast+last_trend_value+seasonality
+favored_count_model_forecast
+
+```
+
+
+### ARIMA model for Category_sold
+
+
+```{r}
+
+
+category_sold_ts <- ts(DisFircasi$category_sold,start = as.Date("2021-04-26"), end = as.Date("2021-05-31"), frequency = 7)
+category_sold_dec <- decompose(x = category_sold_ts,type = "additive")
+category_sold_model= auto.arima(category_sold_dec$random)
+AIC(category_sold_model)
+category_sold_model_forecast <- predict(category_sold_model, n.ahead = 1)$pred
+seasonality=category_sold_dec$seasonal[1:1]
+last_trend_value <-tail(category_sold_dec$trend[!is.na(category_sold_dec$trend)],1)
+category_sold_model_forecast=category_sold_model_forecast+last_trend_value+seasonality
+category_sold_model_forecast
+
+```
+
+
+### ARIMA model for Category_favored
+
+
+
+```{r}
+
+
+category_favored_ts <- ts(DisFircasi$category_favored,start = as.Date("2021-04-26"), end = as.Date("2021-05-31"), frequency = 7)
+category_favored_dec <- decompose(x = category_favored_ts,type = "additive")
+category_favored_model= auto.arima(category_favored_dec$random)
+AIC(category_favored_model)
+category_favored_model_forecast <- predict(category_favored_model, n.ahead = 1)$pred
+seasonality=category_favored_dec$seasonal[1:1]
+last_trend_value <-tail(category_favored_dec$trend[!is.na(category_favored_dec$trend)],1)
+category_favored_model_forecast=category_favored_model_forecast+last_trend_value+seasonality
+category_favored_model_forecast
+
+```
+
+
+
+
+
+
+### ARIMA model for Category_brand_sold
+
+
+
+```{r}
+
+
+category_brand_sold_ts <- ts(DisFircasi$category_brand_sold,start = as.Date("2021-04-26"), end = as.Date("2021-05-31"), frequency = 7)
+category_brand_sold_dec <- decompose(x = category_brand_sold_ts,type = "additive")
+category_brand_sold_model= auto.arima(category_brand_sold_dec$random)
+AIC(category_brand_sold_model)
+category_brand_sold_model_forecast <- predict(category_brand_sold_model, n.ahead = 1)$pred
+seasonality=category_brand_sold_dec$seasonal[1:1]
+last_trend_value <-tail(category_brand_sold_dec$trend[!is.na(category_brand_sold_dec$trend)],1)
+category_brand_sold_model_forecast=category_brand_sold_model_forecast+last_trend_value+seasonality
+category_brand_sold_model_forecast
+
+```
+
+We've forecasted the attributes until now. 
+
+##Prediction
+
+
+```{r}
+
+predict(lmDisFircasi,data.frame(basket_count=basket_count_model_forecast,favored_count=favored_count_model_forecast,category_sold=category_sold_model_forecast,category_favored=category_favored_model_forecast,category_brand_sold=category_brand_sold_model_forecast))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

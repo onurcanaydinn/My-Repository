@@ -1,0 +1,67 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ClassDiagram MajorVersion="1" MinorVersion="1">
+  <Class Name="Ball">
+    <Position X="7.25" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AIyQAAAAAQAAAAEAEAAgAAQAABABABCBAADYAAAACIA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="Player">
+    <Position X="5" Y="2" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAAAAAAAQAAIACAAACAAAAAABAAAAAAAAiAAQAAAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="objectwoutbonusorbad">
+    <Position X="11.75" Y="2" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AASAAAABAAACABAAAAAAAAAAAAAAAAAAAAAAQAAgAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="Bonus">
+    <Position X="0.5" Y="2" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AACAAAAAAAAAAAAAAAAIAAAAAgAAAAAAAACAAAAAAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="Bad">
+    <Position X="5.5" Y="5.25" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AACAAAAAAAgAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="Bomb">
+    <Position X="14" Y="2" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AASQAAAAAAAAAJAAAAAAAAAAAAAAAAAAAAAAAAAgAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="Explosion">
+    <Position X="2.75" Y="2" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AASQAAAAAAAAABAAAAAAAAQEAAAAAAAAAACAAAAgAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="BlackHole">
+    <Position X="9.5" Y="2" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AIyQAAAAAQAAABEAAAAAAAQAAAAAAAAAAACAAAAgAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="Game">
+    <Position X="15" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>EhAAiAAAACAAAAABCgAIJCBAAQAAAAgACEIAAAAAAAA=</HashCode>
+      <FileName>SpaceGame.cpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Font Name="Segoe UI" Size="9" />
+</ClassDiagram>
